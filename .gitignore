@@ -1,0 +1,11 @@
+# binaries
+plotbunni-backend
+plotbunni-backend.exe
+
+# env
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
