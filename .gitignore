@@ -7,6 +7,9 @@ plotbunni-backend.exe
 .env.local
 .env.*.local
 
+# pre-migration backups
+backups/
+
 # IDE
 .vscode/
 .idea/

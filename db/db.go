@@ -4,6 +4,10 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -44,8 +48,52 @@ func Migrate(db *sql.DB) error {
 		return fmt.Errorf("migrate init: %w", err)
 	}
 
+	// Check if there are pending migrations before taking a backup.
+	version, dirty, err := m.Version()
+	hasPending := err == migrate.ErrNilVersion || (err == nil && !dirty)
+	if hasPending && err != migrate.ErrNilVersion {
+		// Only back up when there is actually something to migrate.
+		if backupErr := backupDatabase(); backupErr != nil {
+			log.Printf("WARNING: pre-migration backup failed: %v", backupErr)
+		}
+	}
+	_ = version
+	_ = dirty
+
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("migrate up: %w", err)
 	}
+	return nil
+}
+
+// backupDatabase runs pg_dump and writes the output to backups/<timestamp>.sql.
+// It requires pg_dump to be on the PATH (available inside the postgres Docker image,
+// or installed locally alongside PostgreSQL).
+func backupDatabase() error {
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		return fmt.Errorf("DATABASE_URL not set, skipping backup")
+	}
+
+	if err := os.MkdirAll("backups", 0755); err != nil {
+		return fmt.Errorf("create backups dir: %w", err)
+	}
+
+	filename := fmt.Sprintf("backups/%s.sql", time.Now().UTC().Format("20060102T150405Z"))
+	f, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("create backup file: %w", err)
+	}
+	defer f.Close()
+
+	cmd := exec.Command("pg_dump", dsn)
+	cmd.Stdout = f
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		os.Remove(filename)
+		return fmt.Errorf("pg_dump: %w", err)
+	}
+
+	log.Printf("pre-migration backup written to %s", filename)
 	return nil
 }

@@ -167,6 +167,24 @@ func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, full)
 }
 
+// putFull replaces all data for an existing novel in a single transaction.
+func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	var payload db.FullNovel
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := db.ReplaceFullNovel(r.Context(), h.db, id, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // importNovel accepts a full novel payload in the IndexedDB shape and persists it.
 func (h *novelsHandler) importNovel(w http.ResponseWriter, r *http.Request) {
 	var payload db.FullNovel
