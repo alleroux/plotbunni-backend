@@ -4,7 +4,8 @@ plotbunni-backend.exe
 
 # env
 .env
-.env.*
+.env.local
+.env.*.local
 
 # IDE
 .vscode/
