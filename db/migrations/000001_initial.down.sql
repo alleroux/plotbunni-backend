@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS scene_concepts;
+DROP TABLE IF EXISTS scenes;
+DROP TABLE IF EXISTS chapters;
+DROP TABLE IF EXISTS acts;
+DROP TABLE IF EXISTS concept_templates;
+DROP TABLE IF EXISTS concepts;
+DROP TABLE IF EXISTS novels;

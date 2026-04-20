@@ -1,6 +1,3 @@
-package db
-
-const schema = `
 CREATE TABLE IF NOT EXISTS novels (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name        TEXT NOT NULL,
@@ -13,6 +10,7 @@ CREATE TABLE IF NOT EXISTS novels (
     audience    TEXT,
     themes      TEXT[],
     tone        TEXT,
+    extra_data  JSONB NOT NULL DEFAULT '{}',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -26,8 +24,9 @@ CREATE TABLE IF NOT EXISTS concepts (
     tags        TEXT[],
     description TEXT,
     notes       TEXT,
-    priority    INTEGER DEFAULT 0,
+    priority    INTEGER NOT NULL DEFAULT 0,
     image       TEXT,
+    extra_data  JSONB NOT NULL DEFAULT '{}',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -37,6 +36,7 @@ CREATE TABLE IF NOT EXISTS acts (
     novel_id   UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     position   INTEGER NOT NULL DEFAULT 0,
+    extra_data JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS chapters (
     act_id     UUID NOT NULL REFERENCES acts(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
     position   INTEGER NOT NULL DEFAULT 0,
+    extra_data JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS scenes (
     tags                TEXT[],
     auto_update_context BOOLEAN NOT NULL DEFAULT FALSE,
     position            INTEGER NOT NULL DEFAULT 0,
+    extra_data          JSONB NOT NULL DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -73,9 +75,9 @@ CREATE TABLE IF NOT EXISTS concept_templates (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     novel_id      UUID NOT NULL REFERENCES novels(id) ON DELETE CASCADE,
     name          TEXT NOT NULL,
-    template_data JSONB,
+    template_data JSONB NOT NULL DEFAULT '{}',
     is_default    BOOLEAN NOT NULL DEFAULT FALSE,
+    extra_data    JSONB NOT NULL DEFAULT '{}',
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-`
