@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: plotbunni
+      POSTGRES_USER: plotbunni
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plotbunni"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    environment:
+      DATABASE_URL: postgres://plotbunni:${POSTGRES_PASSWORD}@db:5432/plotbunni?sslmode=disable
+      ADDR: :8080
+      ALLOWED_ORIGINS: ${FRONTEND_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      JWT_SECRET: ${JWT_SECRET}
+      BACKEND_URL: ${BACKEND_URL}
+      FRONTEND_URL: ${FRONTEND_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    # Assumes plotbunni frontend repo is cloned as a sibling directory.
+    # For split-host deployments, build the image separately and push to a registry.
+    build:
+      context: ../plotbunni
+      args:
+        # Leave empty so nginx proxies /api/ and /auth/ to the backend container.
+        # For split deployments set this to the public backend URL instead.
+        VITE_API_URL: ""
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

@@ -8,9 +8,12 @@ import (
 )
 
 func NewRouter(db *sql.DB) http.Handler {
-	// Public mux: auth endpoints, no JWT required
+	// Public mux: auth endpoints + health check, no JWT required
 	public := http.NewServeMux()
 	auth := newAuthHandler(db)
+	public.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	public.HandleFunc("GET /auth/google/login", auth.login)
 	public.HandleFunc("GET /auth/google/callback", auth.callback)
 
