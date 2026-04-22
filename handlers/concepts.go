@@ -12,13 +12,22 @@ type conceptsHandler struct {
 
 func (h *conceptsHandler) list(w http.ResponseWriter, r *http.Request) {
 	novelId := r.PathValue("novelId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkNovelOwner(r.Context(), h.db, novelId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, type, name, aliases, tags, description, notes, priority, image, extra_data, created_at, updated_at
 		FROM concepts WHERE novel_id = $1 ORDER BY priority DESC, name
 	`, novelId)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -27,7 +36,7 @@ func (h *conceptsHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		c, err := scanConcept(rows)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, c)
@@ -38,6 +47,15 @@ func (h *conceptsHandler) list(w http.ResponseWriter, r *http.Request) {
 
 func (h *conceptsHandler) create(w http.ResponseWriter, r *http.Request) {
 	novelId := r.PathValue("novelId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkNovelOwner(r.Context(), h.db, novelId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		ID          *string         `json:"id"`
@@ -59,7 +77,6 @@ func (h *conceptsHandler) create(w http.ResponseWriter, r *http.Request) {
 	extra := normalizeExtra(body.ExtraData)
 
 	var id string
-	// Accept a client-supplied UUID so imports can preserve existing IDs.
 	var err error
 	if body.ID != nil {
 		err = h.db.QueryRowContext(r.Context(), `
@@ -77,7 +94,7 @@ func (h *conceptsHandler) create(w http.ResponseWriter, r *http.Request) {
 			body.Description, body.Notes, body.Priority, body.Image, extra).Scan(&id)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -87,6 +104,15 @@ func (h *conceptsHandler) create(w http.ResponseWriter, r *http.Request) {
 func (h *conceptsHandler) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	novelId := r.PathValue("novelId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkNovelOwner(r.Context(), h.db, novelId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	row := h.db.QueryRowContext(r.Context(), `
 		SELECT id, type, name, aliases, tags, description, notes, priority, image, extra_data, created_at, updated_at
@@ -99,7 +125,7 @@ func (h *conceptsHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -109,6 +135,15 @@ func (h *conceptsHandler) get(w http.ResponseWriter, r *http.Request) {
 func (h *conceptsHandler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	novelId := r.PathValue("novelId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkNovelOwner(r.Context(), h.db, novelId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		Name        *string         `json:"name"`
@@ -144,7 +179,7 @@ func (h *conceptsHandler) update(w http.ResponseWriter, r *http.Request) {
 	`, id, novelId, body.Name, body.Type, pqArray(body.Aliases), pqArray(body.Tags),
 		body.Description, body.Notes, body.Priority, body.Image, extra)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -154,9 +189,18 @@ func (h *conceptsHandler) update(w http.ResponseWriter, r *http.Request) {
 func (h *conceptsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	novelId := r.PathValue("novelId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkNovelOwner(r.Context(), h.db, novelId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM concepts WHERE id = $1 AND novel_id = $2`, id, novelId); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -168,11 +212,11 @@ type scanner interface {
 
 func scanConcept(s scanner) (map[string]any, error) {
 	var (
-		id, cType, name   string
-		aliases, tags     []string
+		id, cType, name      string
+		aliases, tags        []string
 		description, notes, image *string
-		priority          int
-		extra             []byte
+		priority             int
+		extra                []byte
 		createdAt, updatedAt string
 	)
 	err := s.Scan(&id, &cType, &name, (*pqStringArray)(&aliases), (*pqStringArray)(&tags),

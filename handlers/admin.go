@@ -49,7 +49,7 @@ func (h *adminHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 		LIMIT $2 OFFSET $3
 	`, q, pageSize, (page-1)*pageSize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -73,7 +73,7 @@ func (h *adminHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 		if err := rows.Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.IsAdmin,
 			&u.SubscriptionStatus, &u.SubscriptionTier, &u.SubscriptionEndsAt,
 			&u.StripeCustomerID, &u.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, u)
@@ -128,7 +128,7 @@ func (h *adminHandler) updateUserSubscription(w http.ResponseWriter, r *http.Req
 	}
 
 	if execErr != nil {
-		http.Error(w, execErr.Error(), http.StatusInternalServerError)
+		internalError(w, execErr)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (h *adminHandler) listLogs(w http.ResponseWriter, r *http.Request) {
 		LIMIT $1 OFFSET $2
 	`, pageSize, (page-1)*pageSize)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -189,7 +189,7 @@ func (h *adminHandler) listLogs(w http.ResponseWriter, r *http.Request) {
 		var l logRow
 		var details []byte
 		if err := rows.Scan(&l.ID, &l.Action, &details, &l.CreatedAt, &l.AdminEmail, &l.TargetEmail); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		l.Details = json.RawMessage(details)
@@ -235,22 +235,22 @@ func (h *adminHandler) listTransactions(w http.ResponseWriter, r *http.Request) 
 		`, pageSize, (page-1)*pageSize)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
 
 	type txRow struct {
-		ID                    string  `json:"id"`
-		StripeEventID         string  `json:"stripe_event_id"`
-		EventType             string  `json:"event_type"`
-		AmountCents           *int64  `json:"amount_cents"`
-		Currency              *string `json:"currency"`
-		Status                *string `json:"status"`
-		StripeCustomerID      *string `json:"stripe_customer_id"`
-		StripeSubscriptionID  *string `json:"stripe_subscription_id"`
-		CreatedAt             string  `json:"created_at"`
-		UserEmail             *string `json:"user_email"`
+		ID                   string  `json:"id"`
+		StripeEventID        string  `json:"stripe_event_id"`
+		EventType            string  `json:"event_type"`
+		AmountCents          *int64  `json:"amount_cents"`
+		Currency             *string `json:"currency"`
+		Status               *string `json:"status"`
+		StripeCustomerID     *string `json:"stripe_customer_id"`
+		StripeSubscriptionID *string `json:"stripe_subscription_id"`
+		CreatedAt            string  `json:"created_at"`
+		UserEmail            *string `json:"user_email"`
 	}
 
 	results := []txRow{}
@@ -258,7 +258,7 @@ func (h *adminHandler) listTransactions(w http.ResponseWriter, r *http.Request) 
 		var t txRow
 		if err := rows.Scan(&t.ID, &t.StripeEventID, &t.EventType, &t.AmountCents, &t.Currency,
 			&t.Status, &t.StripeCustomerID, &t.StripeSubscriptionID, &t.CreatedAt, &t.UserEmail); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, t)

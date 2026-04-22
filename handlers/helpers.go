@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 )
 
@@ -105,6 +106,47 @@ func parseArray(s string) []string {
 		result = append(result, string(cur))
 	}
 	return result
+}
+
+// internalError logs the error server-side and returns a generic 500 so
+// internal details (table names, query structure) are never sent to clients.
+func internalError(w http.ResponseWriter, err error) {
+	log.Printf("internal error: %v", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
+}
+
+// checkNovelOwner returns (true, nil) when novelID belongs to userID.
+func checkNovelOwner(ctx context.Context, db *sql.DB, novelID, userID string) (bool, error) {
+	var ok bool
+	err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM novels WHERE id = $1 AND user_id = $2)`,
+		novelID, userID).Scan(&ok)
+	return ok, err
+}
+
+// checkActOwner returns (true, nil) when actID is inside a novel owned by userID.
+func checkActOwner(ctx context.Context, db *sql.DB, actID, userID string) (bool, error) {
+	var ok bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM acts a
+			JOIN novels n ON n.id = a.novel_id
+			WHERE a.id = $1 AND n.user_id = $2
+		)`, actID, userID).Scan(&ok)
+	return ok, err
+}
+
+// checkChapterOwner returns (true, nil) when chapterID is inside a novel owned by userID.
+func checkChapterOwner(ctx context.Context, db *sql.DB, chapterID, userID string) (bool, error) {
+	var ok bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM chapters ch
+			JOIN acts a ON a.id = ch.act_id
+			JOIN novels n ON n.id = a.novel_id
+			WHERE ch.id = $1 AND n.user_id = $2
+		)`, chapterID, userID).Scan(&ok)
+	return ok, err
 }
 
 // upsertSceneConcepts inserts concept links for a scene within a transaction.

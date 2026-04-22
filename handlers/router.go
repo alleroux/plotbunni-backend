@@ -12,12 +12,19 @@ func NewRouter(db *sql.DB) http.Handler {
 	public := http.NewServeMux()
 	auth := newAuthHandler(db)
 	billing := newBillingHandler(db)
+
+	// Stricter rate limiters for endpoints that trigger external side-effects.
+	// Auth: 5 attempts per minute per IP (burst 5).
+	authLimiter := newRateLimiter(5.0/60, 5)
+	// Billing: 3 checkout/portal requests per minute per IP (burst 3).
+	billingLimiter := newRateLimiter(3.0/60, 3)
+
 	public.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	public.HandleFunc("GET /auth/google/login", auth.login)
+	public.Handle("GET /auth/google/login", authLimiter.wrap(http.HandlerFunc(auth.login)))
 	public.HandleFunc("GET /auth/google/callback", auth.callback)
-	public.HandleFunc("POST /webhooks/stripe", billing.webhook)
+	public.HandleFunc("POST /webhooks/stripe", billing.webhook) // body size limited inside handler
 
 	// Protected mux: all API routes require a valid JWT
 	api := http.NewServeMux()
@@ -25,8 +32,8 @@ func NewRouter(db *sql.DB) http.Handler {
 	api.HandleFunc("GET /api/v1/me", auth.me)
 
 	// Billing
-	api.HandleFunc("POST /api/v1/billing/checkout", billing.checkout)
-	api.HandleFunc("POST /api/v1/billing/portal", billing.portal)
+	api.Handle("POST /api/v1/billing/checkout", billingLimiter.wrap(http.HandlerFunc(billing.checkout)))
+	api.Handle("POST /api/v1/billing/portal", billingLimiter.wrap(http.HandlerFunc(billing.portal)))
 
 	// Admin — additional adminMiddleware check applied in the combined handler below
 	adm := &adminHandler{db: db}
@@ -92,7 +99,19 @@ func NewRouter(db *sql.DB) http.Handler {
 		}
 	})
 
-	return corsMiddleware(combined)
+	// Global middleware stack (outermost first):
+	//   1. CORS
+	//   2. 10 MB body size limit (prevents memory exhaustion on all non-webhook endpoints;
+	//      the webhook endpoint enforces its own tighter 64 KB limit internally)
+	return corsMiddleware(maxBytesMiddleware(combined))
+}
+
+// maxBytesMiddleware limits request bodies to 10 MB to prevent memory exhaustion.
+func maxBytesMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func corsMiddleware(next http.Handler) http.Handler {

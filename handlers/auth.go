@@ -2,11 +2,14 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -36,12 +39,43 @@ func newAuthHandler(db *sql.DB) *authHandler {
 	}
 }
 
+func generateStateToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
 func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
-	url := h.config.AuthCodeURL("state", oauth2.AccessTypeOnline)
-	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
+	state, err := generateStateToken()
+	if err != nil {
+		internalError(w, err)
+		return
+	}
+	secure := strings.HasPrefix(os.Getenv("BACKEND_URL"), "https://")
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   secure,
+		MaxAge:   300,
+		SameSite: http.SameSiteLaxMode,
+		Path:     "/",
+	})
+	http.Redirect(w, r, h.config.AuthCodeURL(state, oauth2.AccessTypeOnline), http.StatusTemporaryRedirect)
 }
 
 func (h *authHandler) callback(w http.ResponseWriter, r *http.Request) {
+	// Verify CSRF state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || r.URL.Query().Get("state") != cookie.Value {
+		http.Error(w, "invalid state", http.StatusBadRequest)
+		return
+	}
+	// Consume the state cookie immediately
+	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/"})
+
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", http.StatusBadRequest)
@@ -85,13 +119,13 @@ func (h *authHandler) callback(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, info.Sub, info.Email, info.Name, info.AvatarURL).Scan(&userID)
 	if err != nil {
-		http.Error(w, "failed to save user", http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	signed, err := issueJWT(userID, info.Email, info.Name)
 	if err != nil {
-		http.Error(w, "failed to issue token", http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -99,6 +133,8 @@ func (h *authHandler) callback(w http.ResponseWriter, r *http.Request) {
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
+	// Token is appended inside the hash fragment so it is never sent to any
+	// server (browsers strip fragments from HTTP requests and Referer headers).
 	http.Redirect(w, r, fmt.Sprintf("%s/#/auth/callback?token=%s", frontendURL, signed), http.StatusTemporaryRedirect)
 }
 
@@ -131,7 +167,7 @@ func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 

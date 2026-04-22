@@ -12,6 +12,15 @@ type scenesHandler struct {
 
 func (h *scenesHandler) list(w http.ResponseWriter, r *http.Request) {
 	chapterId := r.PathValue("chapterId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkChapterOwner(r.Context(), h.db, chapterId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT s.id, s.name, s.synopsis, s.content, s.tags, s.auto_update_context,
@@ -24,7 +33,7 @@ func (h *scenesHandler) list(w http.ResponseWriter, r *http.Request) {
 		ORDER BY s.position
 	`, chapterId)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -33,7 +42,7 @@ func (h *scenesHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		s, err := scanScene(rows)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, s)
@@ -43,6 +52,15 @@ func (h *scenesHandler) list(w http.ResponseWriter, r *http.Request) {
 
 func (h *scenesHandler) create(w http.ResponseWriter, r *http.Request) {
 	chapterId := r.PathValue("chapterId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkChapterOwner(r.Context(), h.db, chapterId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		ID                *string         `json:"id"`
@@ -64,7 +82,7 @@ func (h *scenesHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -84,17 +102,17 @@ func (h *scenesHandler) create(w http.ResponseWriter, r *http.Request) {
 			pqArray(body.Tags), body.AutoUpdateContext, body.Position, extra).Scan(&id)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	if err := upsertSceneConcepts(r.Context(), tx, id, body.ConceptIDs); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -103,6 +121,15 @@ func (h *scenesHandler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *scenesHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, chapterId := r.PathValue("id"), r.PathValue("chapterId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkChapterOwner(r.Context(), h.db, chapterId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	row := h.db.QueryRowContext(r.Context(), `
 		SELECT s.id, s.name, s.synopsis, s.content, s.tags, s.auto_update_context,
@@ -120,7 +147,7 @@ func (h *scenesHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s)
@@ -128,6 +155,15 @@ func (h *scenesHandler) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *scenesHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, chapterId := r.PathValue("id"), r.PathValue("chapterId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkChapterOwner(r.Context(), h.db, chapterId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		Name              *string         `json:"name"`
@@ -148,7 +184,7 @@ func (h *scenesHandler) update(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer tx.Rollback()
@@ -167,23 +203,23 @@ func (h *scenesHandler) update(w http.ResponseWriter, r *http.Request) {
 	`, id, chapterId, body.Name, body.Synopsis, body.Content,
 		pqArray(body.Tags), body.AutoUpdateContext, body.Position, extra)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	if body.ConceptIDs != nil {
 		if _, err := tx.ExecContext(r.Context(), `DELETE FROM scene_concepts WHERE scene_id = $1`, id); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		if err := upsertSceneConcepts(r.Context(), tx, id, body.ConceptIDs); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -191,8 +227,18 @@ func (h *scenesHandler) update(w http.ResponseWriter, r *http.Request) {
 
 func (h *scenesHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, chapterId := r.PathValue("id"), r.PathValue("chapterId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkChapterOwner(r.Context(), h.db, chapterId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
 	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM scenes WHERE id = $1 AND chapter_id = $2`, id, chapterId); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

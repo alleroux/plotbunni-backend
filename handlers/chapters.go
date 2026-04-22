@@ -12,13 +12,22 @@ type chaptersHandler struct {
 
 func (h *chaptersHandler) list(w http.ResponseWriter, r *http.Request) {
 	actId := r.PathValue("actId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkActOwner(r.Context(), h.db, actId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, name, position, extra_data, created_at, updated_at
 		FROM chapters WHERE act_id = $1 ORDER BY position
 	`, actId)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -27,7 +36,7 @@ func (h *chaptersHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		c, err := scanChapter(rows)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, c)
@@ -37,6 +46,15 @@ func (h *chaptersHandler) list(w http.ResponseWriter, r *http.Request) {
 
 func (h *chaptersHandler) create(w http.ResponseWriter, r *http.Request) {
 	actId := r.PathValue("actId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkActOwner(r.Context(), h.db, actId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		ID        *string         `json:"id"`
@@ -65,7 +83,7 @@ func (h *chaptersHandler) create(w http.ResponseWriter, r *http.Request) {
 		`, actId, body.Name, body.Position, extra).Scan(&id)
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -74,6 +92,15 @@ func (h *chaptersHandler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *chaptersHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, actId := r.PathValue("id"), r.PathValue("actId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkActOwner(r.Context(), h.db, actId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	row := h.db.QueryRowContext(r.Context(), `
 		SELECT id, name, position, extra_data, created_at, updated_at
@@ -86,7 +113,7 @@ func (h *chaptersHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
@@ -94,6 +121,15 @@ func (h *chaptersHandler) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *chaptersHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, actId := r.PathValue("id"), r.PathValue("actId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkActOwner(r.Context(), h.db, actId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	var body struct {
 		Name      *string         `json:"name"`
@@ -116,7 +152,7 @@ func (h *chaptersHandler) update(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $1 AND act_id = $2
 	`, id, actId, body.Name, body.Position, extra)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -124,8 +160,18 @@ func (h *chaptersHandler) update(w http.ResponseWriter, r *http.Request) {
 
 func (h *chaptersHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, actId := r.PathValue("id"), r.PathValue("actId")
+	userID, _ := getUserID(r)
+
+	if ok, err := checkActOwner(r.Context(), h.db, actId, userID); err != nil {
+		internalError(w, err)
+		return
+	} else if !ok {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
 	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM chapters WHERE id = $1 AND act_id = $2`, id, actId); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -19,7 +19,7 @@ func (h *novelsHandler) list(w http.ResponseWriter, r *http.Request) {
 		FROM novels WHERE user_id = $1 ORDER BY updated_at DESC
 	`, userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	defer rows.Close()
@@ -37,7 +37,7 @@ func (h *novelsHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.ID, &r.Name, &r.Synopsis, &r.CoverImage, &r.Author, &r.UpdatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			internalError(w, err)
 			return
 		}
 		results = append(results, r)
@@ -70,7 +70,7 @@ func (h *novelsHandler) create(w http.ResponseWriter, r *http.Request) {
 		RETURNING id
 	`, body.Name, body.Synopsis, body.CoverImage, body.Author, extra, userID).Scan(&id)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -87,10 +87,11 @@ func (h *novelsHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
-	if novel.UserID != nil && *novel.UserID != userID {
+	// Reject novels with no owner or a different owner — no nil exception for legacy data.
+	if novel.UserID == nil || *novel.UserID != userID {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -141,7 +142,7 @@ func (h *novelsHandler) update(w http.ResponseWriter, r *http.Request) {
 		body.POV, body.Genre, body.TimePeriod, body.Audience, body.Tone,
 		pqArray(body.Themes), extra, userID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -152,13 +153,12 @@ func (h *novelsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	userID, _ := getUserID(r)
 	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM novels WHERE id = $1 AND user_id = $2`, id, userID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// getFull returns the complete novel in the IndexedDB shape the frontend expects.
 func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	userID, _ := getUserID(r)
@@ -169,10 +169,11 @@ func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
-	if full.UserID != nil && *full.UserID != userID {
+	// Reject novels with no owner or a different owner.
+	if full.UserID == nil || *full.UserID != userID {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
@@ -180,7 +181,6 @@ func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, full)
 }
 
-// putFull replaces all data for an existing novel in a single transaction.
 func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	userID, _ := getUserID(r)
@@ -192,14 +192,13 @@ func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.ReplaceFullNovelForUser(r.Context(), h.db, id, userID, &payload); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// importNovel accepts a full novel payload and persists it for the current user.
 func (h *novelsHandler) importNovel(w http.ResponseWriter, r *http.Request) {
 	userID, _ := getUserID(r)
 
@@ -211,7 +210,7 @@ func (h *novelsHandler) importNovel(w http.ResponseWriter, r *http.Request) {
 
 	id, err := db.ImportFullNovelForUser(r.Context(), h.db, userID, &payload)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 

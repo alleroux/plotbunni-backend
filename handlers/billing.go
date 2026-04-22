@@ -35,13 +35,13 @@ func (h *billingHandler) checkout(w http.ResponseWriter, r *http.Request) {
 		`SELECT email, stripe_customer_id FROM users WHERE id = $1`, userID).
 		Scan(&email, &stripeCustomerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
 	customerID, err := h.ensureStripeCustomer(r.Context(), userID, email, stripeCustomerID)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -62,7 +62,7 @@ func (h *billingHandler) checkout(w http.ResponseWriter, r *http.Request) {
 
 	s, err := checkoutsession.New(params)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -93,7 +93,7 @@ func (h *billingHandler) portal(w http.ResponseWriter, r *http.Request) {
 
 	s, err := session.New(params)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		internalError(w, err)
 		return
 	}
 
@@ -102,6 +102,8 @@ func (h *billingHandler) portal(w http.ResponseWriter, r *http.Request) {
 
 // POST /webhooks/stripe — public endpoint, verifies Stripe signature.
 func (h *billingHandler) webhook(w http.ResponseWriter, r *http.Request) {
+	// Limit body size before reading to prevent memory exhaustion attacks.
+	r.Body = http.MaxBytesReader(w, r.Body, 65536)
 	payload, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "cannot read body", http.StatusBadRequest)
@@ -135,7 +137,6 @@ func (h *billingHandler) handleSubscriptionChanged(ctx context.Context, event st
 	}
 
 	status := mapSubscriptionStatus(sub.Status)
-	// CancelAt is set when the subscription is scheduled to end at period end.
 	var endsAt *int64
 	if sub.CancelAt > 0 {
 		endsAt = &sub.CancelAt
@@ -146,13 +147,14 @@ func (h *billingHandler) handleSubscriptionChanged(ctx context.Context, event st
 		tier = sub.Items.Data[0].Price.ID
 	}
 
+	// Never overwrite admin-granted free access via Stripe events.
 	_, _ = h.db.ExecContext(ctx, `
 		UPDATE users SET
 			subscription_status  = $2,
 			subscription_tier    = $3,
 			subscription_ends_at = CASE WHEN $4::bigint IS NULL THEN NULL
 			                            ELSE to_timestamp($4) END
-		WHERE stripe_customer_id = $1
+		WHERE stripe_customer_id = $1 AND subscription_tier != 'free_grant'
 	`, sub.Customer.ID, status, tier, endsAt)
 }
 
@@ -163,7 +165,7 @@ func (h *billingHandler) handleSubscriptionDeleted(ctx context.Context, event st
 	}
 	_, _ = h.db.ExecContext(ctx, `
 		UPDATE users SET subscription_status = 'canceled', subscription_tier = NULL
-		WHERE stripe_customer_id = $1
+		WHERE stripe_customer_id = $1 AND subscription_tier != 'free_grant'
 	`, sub.Customer.ID)
 }
 
@@ -174,7 +176,7 @@ func (h *billingHandler) handlePaymentFailed(ctx context.Context, event stripe.E
 	}
 	_, _ = h.db.ExecContext(ctx, `
 		UPDATE users SET subscription_status = 'past_due'
-		WHERE stripe_customer_id = $1
+		WHERE stripe_customer_id = $1 AND subscription_tier != 'free_grant'
 	`, inv.Customer.ID)
 }
 
@@ -194,7 +196,6 @@ func (h *billingHandler) logStripeTransaction(ctx context.Context, event stripe.
 		if err := json.Unmarshal(event.Data.Raw, &inv); err == nil && inv.Customer != nil {
 			cid := inv.Customer.ID
 			customerID = &cid
-			// Subscription ID lives in Parent.SubscriptionDetails in API v82+
 			if inv.Parent != nil && inv.Parent.SubscriptionDetails != nil &&
 				inv.Parent.SubscriptionDetails.Subscription != nil {
 				sid := inv.Parent.SubscriptionDetails.Subscription.ID
