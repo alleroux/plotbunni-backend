@@ -110,14 +110,22 @@ func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user struct {
-		ID        string `json:"id"`
-		Email     string `json:"email"`
-		Name      string `json:"name"`
-		AvatarURL string `json:"avatar_url"`
+		ID                 string  `json:"id"`
+		Email              string  `json:"email"`
+		Name               string  `json:"name"`
+		AvatarURL          string  `json:"avatar_url"`
+		IsAdmin            bool    `json:"is_admin"`
+		SubscriptionStatus string  `json:"subscription_status"`
+		SubscriptionTier   *string `json:"subscription_tier"`
+		SubscriptionEndsAt *string `json:"subscription_ends_at"`
 	}
 	err := h.db.QueryRowContext(r.Context(), `
-		SELECT id, email, name, avatar_url FROM users WHERE id = $1
-	`, userID).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL)
+		SELECT id, email, name, avatar_url, is_admin,
+		       subscription_status, subscription_tier,
+		       subscription_ends_at::text
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.Email, &user.Name, &user.AvatarURL, &user.IsAdmin,
+		&user.SubscriptionStatus, &user.SubscriptionTier, &user.SubscriptionEndsAt)
 	if err == sql.ErrNoRows {
 		http.Error(w, "user not found", http.StatusNotFound)
 		return

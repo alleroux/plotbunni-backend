@@ -8,19 +8,33 @@ import (
 )
 
 func NewRouter(db *sql.DB) http.Handler {
-	// Public mux: auth endpoints + health check, no JWT required
+	// Public mux: auth + health + Stripe webhook (no JWT)
 	public := http.NewServeMux()
 	auth := newAuthHandler(db)
+	billing := newBillingHandler(db)
 	public.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	public.HandleFunc("GET /auth/google/login", auth.login)
 	public.HandleFunc("GET /auth/google/callback", auth.callback)
+	public.HandleFunc("POST /webhooks/stripe", billing.webhook)
 
 	// Protected mux: all API routes require a valid JWT
 	api := http.NewServeMux()
 
 	api.HandleFunc("GET /api/v1/me", auth.me)
+
+	// Billing
+	api.HandleFunc("POST /api/v1/billing/checkout", billing.checkout)
+	api.HandleFunc("POST /api/v1/billing/portal", billing.portal)
+
+	// Admin — additional adminMiddleware check applied in the combined handler below
+	adm := &adminHandler{db: db}
+	adminMux := http.NewServeMux()
+	adminMux.HandleFunc("GET /api/v1/admin/users", adm.listUsers)
+	adminMux.HandleFunc("PUT /api/v1/admin/users/{id}/subscription", adm.updateUserSubscription)
+	adminMux.HandleFunc("GET /api/v1/admin/logs", adm.listLogs)
+	adminMux.HandleFunc("GET /api/v1/admin/transactions", adm.listTransactions)
 
 	novels := &novelsHandler{db: db}
 	api.HandleFunc("GET /api/v1/novels", novels.list)
@@ -66,13 +80,16 @@ func NewRouter(db *sql.DB) http.Handler {
 	api.HandleFunc("PUT /api/v1/novels/{novelId}/concept-templates/{id}", templates.update)
 	api.HandleFunc("DELETE /api/v1/novels/{novelId}/concept-templates/{id}", templates.delete)
 
-	// Combine: public routes pass through, API routes require auth
+	// Combine: public → no auth; /api/v1/admin/* → auth + admin check; /api/* → auth only
 	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/admin/"):
+			authMiddleware(adminMiddleware(db, adminMux)).ServeHTTP(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/"):
 			authMiddleware(api).ServeHTTP(w, r)
-			return
+		default:
+			public.ServeHTTP(w, r)
 		}
-		public.ServeHTTP(w, r)
 	})
 
 	return corsMiddleware(combined)
