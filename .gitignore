@@ -6,6 +6,11 @@ plotbunni-backend.exe
 .env
 .env.local
 .env.*.local
+envs/stage.env
+envs/prod.env
+
+# local Makefile overrides (SSH hosts, etc.)
+.makerc
 
 # pre-migration backups
 backups/
