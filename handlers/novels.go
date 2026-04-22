@@ -13,10 +13,11 @@ type novelsHandler struct {
 }
 
 func (h *novelsHandler) list(w http.ResponseWriter, r *http.Request) {
+	userID, _ := getUserID(r)
 	rows, err := h.db.QueryContext(r.Context(), `
 		SELECT id, name, synopsis, cover_image, author, updated_at
-		FROM novels ORDER BY updated_at DESC
-	`)
+		FROM novels WHERE user_id = $1 ORDER BY updated_at DESC
+	`, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -46,6 +47,8 @@ func (h *novelsHandler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *novelsHandler) create(w http.ResponseWriter, r *http.Request) {
+	userID, _ := getUserID(r)
+
 	var body struct {
 		Name       string          `json:"name"`
 		Synopsis   *string         `json:"synopsis"`
@@ -62,10 +65,10 @@ func (h *novelsHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	var id string
 	err := h.db.QueryRowContext(r.Context(), `
-		INSERT INTO novels (name, synopsis, cover_image, author, extra_data)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO novels (name, synopsis, cover_image, author, extra_data, user_id)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
-	`, body.Name, body.Synopsis, body.CoverImage, body.Author, extra).Scan(&id)
+	`, body.Name, body.Synopsis, body.CoverImage, body.Author, extra, userID).Scan(&id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -76,6 +79,7 @@ func (h *novelsHandler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h *novelsHandler) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	userID, _ := getUserID(r)
 
 	novel, err := db.GetNovel(r.Context(), h.db, id)
 	if err == sql.ErrNoRows {
@@ -86,12 +90,17 @@ func (h *novelsHandler) get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if novel.UserID != nil && *novel.UserID != userID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, novel)
 }
 
 func (h *novelsHandler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	userID, _ := getUserID(r)
 
 	var body struct {
 		Name       *string         `json:"name"`
@@ -127,10 +136,10 @@ func (h *novelsHandler) update(w http.ResponseWriter, r *http.Request) {
 			themes      = COALESCE($11, themes),
 			extra_data  = extra_data || $12,
 			updated_at  = NOW()
-		WHERE id = $1
+		WHERE id = $1 AND user_id = $13
 	`, id, body.Name, body.Synopsis, body.CoverImage, body.Author,
 		body.POV, body.Genre, body.TimePeriod, body.Audience, body.Tone,
-		pqArray(body.Themes), extra)
+		pqArray(body.Themes), extra, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -141,7 +150,8 @@ func (h *novelsHandler) update(w http.ResponseWriter, r *http.Request) {
 
 func (h *novelsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM novels WHERE id = $1`, id); err != nil {
+	userID, _ := getUserID(r)
+	if _, err := h.db.ExecContext(r.Context(), `DELETE FROM novels WHERE id = $1 AND user_id = $2`, id, userID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -149,10 +159,9 @@ func (h *novelsHandler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // getFull returns the complete novel in the IndexedDB shape the frontend expects.
-// This makes the frontend adapter resilient to upstream data model changes: new
-// top-level fields land in extra_data and are passed through transparently.
 func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	userID, _ := getUserID(r)
 
 	full, err := db.GetFullNovel(r.Context(), h.db, id)
 	if err == sql.ErrNoRows {
@@ -163,6 +172,10 @@ func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if full.UserID != nil && *full.UserID != userID {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
 
 	writeJSON(w, http.StatusOK, full)
 }
@@ -170,6 +183,7 @@ func (h *novelsHandler) getFull(w http.ResponseWriter, r *http.Request) {
 // putFull replaces all data for an existing novel in a single transaction.
 func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	userID, _ := getUserID(r)
 
 	var payload db.FullNovel
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -177,7 +191,7 @@ func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := db.ReplaceFullNovel(r.Context(), h.db, id, &payload); err != nil {
+	if err := db.ReplaceFullNovelForUser(r.Context(), h.db, id, userID, &payload); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -185,15 +199,17 @@ func (h *novelsHandler) putFull(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// importNovel accepts a full novel payload in the IndexedDB shape and persists it.
+// importNovel accepts a full novel payload and persists it for the current user.
 func (h *novelsHandler) importNovel(w http.ResponseWriter, r *http.Request) {
+	userID, _ := getUserID(r)
+
 	var payload db.FullNovel
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	id, err := db.ImportFullNovel(r.Context(), h.db, &payload)
+	id, err := db.ImportFullNovelForUser(r.Context(), h.db, userID, &payload)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

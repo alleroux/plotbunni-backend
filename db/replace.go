@@ -90,6 +90,20 @@ func ReplaceFullNovel(ctx context.Context, db *sql.DB, id string, payload *FullN
 	return tx.Commit()
 }
 
+// ReplaceFullNovelForUser is like ReplaceFullNovel but verifies the novel belongs to userID.
+func ReplaceFullNovelForUser(ctx context.Context, db *sql.DB, id, userID string, payload *FullNovel) error {
+	// Verify ownership before replacing
+	var exists bool
+	err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM novels WHERE id=$1 AND user_id=$2)`, id, userID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("ownership check: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("novel not found")
+	}
+	return ReplaceFullNovel(ctx, db, id, payload)
+}
+
 func jsonOrEmptyRaw(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil || b == nil {

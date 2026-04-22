@@ -20,6 +20,7 @@ type Novel struct {
 	Themes     []string        `json:"themes"`
 	Tone       *string         `json:"tone"`
 	ExtraData  json.RawMessage `json:"extra_data"`
+	UserID     *string         `json:"user_id,omitempty"`
 	CreatedAt  string          `json:"created_at"`
 	UpdatedAt  string          `json:"updated_at"`
 }
@@ -57,12 +58,12 @@ func GetNovel(ctx context.Context, db *sql.DB, id string) (*Novel, error) {
 
 	err := db.QueryRowContext(ctx, `
 		SELECT id, name, synopsis, cover_image, author, pov, genre, time_period, audience,
-		       array_to_json(themes), tone, extra_data, created_at, updated_at
+		       array_to_json(themes), tone, extra_data, user_id, created_at, updated_at
 		FROM novels WHERE id = $1
 	`, id).Scan(
 		&n.ID, &n.Name, &n.Synopsis, &n.CoverImage, &n.Author,
 		&n.POV, &n.Genre, &n.TimePeriod, &n.Audience,
-		&themes, &n.Tone, &extra, &n.CreatedAt, &n.UpdatedAt,
+		&themes, &n.Tone, &extra, &n.UserID, &n.CreatedAt, &n.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -77,6 +78,66 @@ func GetNovel(ctx context.Context, db *sql.DB, id string) (*Novel, error) {
 		n.ExtraData = json.RawMessage("{}")
 	}
 	return &n, nil
+}
+
+// ImportFullNovelForUser is like ImportFullNovel but assigns ownership to userID.
+func ImportFullNovelForUser(ctx context.Context, db *sql.DB, userID string, payload *FullNovel) (string, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	extra := jsonOrEmpty(payload.ExtraData)
+
+	var novelId string
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO novels (name, synopsis, cover_image, author, pov, genre, time_period, audience, tone, extra_data, user_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		RETURNING id
+	`, payload.Name, payload.Synopsis, payload.CoverImage, payload.Author,
+		payload.POV, payload.Genre, payload.TimePeriod, payload.Audience, payload.Tone, extra, userID).Scan(&novelId)
+	if err != nil {
+		return "", err
+	}
+
+	for _, c := range payload.Concepts {
+		if err := insertConceptMap(ctx, tx, novelId, c); err != nil {
+			return "", err
+		}
+	}
+
+	for _, act := range payload.Acts {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO acts (id, novel_id, name, position, extra_data)
+			VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE
+			SET name=$3, position=$4, extra_data=$5
+		`, act.ID, novelId, act.Name, act.Position, jsonOrEmpty(act.ExtraData)); err != nil {
+			return "", err
+		}
+		for _, ch := range act.Chapters {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO chapters (id, act_id, name, position, extra_data)
+				VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO UPDATE
+				SET name=$3, position=$4, extra_data=$5
+			`, ch.ID, act.ID, ch.Name, ch.Position, jsonOrEmpty(ch.ExtraData)); err != nil {
+				return "", err
+			}
+			for _, s := range ch.Scenes {
+				if err := insertSceneMap(ctx, tx, ch.ID, s); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+
+	for _, t := range payload.ConceptTemplates {
+		if err := insertTemplateMap(ctx, tx, novelId, t); err != nil {
+			return "", err
+		}
+	}
+
+	return novelId, tx.Commit()
 }
 
 // GetFullNovel assembles the complete novel tree in one database round-trip per layer.

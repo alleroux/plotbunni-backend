@@ -8,53 +8,71 @@ import (
 )
 
 func NewRouter(db *sql.DB) http.Handler {
-	mux := http.NewServeMux()
+	// Public mux: auth endpoints, no JWT required
+	public := http.NewServeMux()
+	auth := newAuthHandler(db)
+	public.HandleFunc("GET /auth/google/login", auth.login)
+	public.HandleFunc("GET /auth/google/callback", auth.callback)
+
+	// Protected mux: all API routes require a valid JWT
+	api := http.NewServeMux()
+
+	api.HandleFunc("GET /api/v1/me", auth.me)
 
 	novels := &novelsHandler{db: db}
-	mux.HandleFunc("GET /api/v1/novels", novels.list)
-	mux.HandleFunc("POST /api/v1/novels", novels.create)
-	mux.HandleFunc("GET /api/v1/novels/{id}", novels.get)
-	mux.HandleFunc("PUT /api/v1/novels/{id}", novels.update)
-	mux.HandleFunc("DELETE /api/v1/novels/{id}", novels.delete)
-	mux.HandleFunc("GET /api/v1/novels/{id}/full", novels.getFull)
-	mux.HandleFunc("PUT /api/v1/novels/{id}/full", novels.putFull)
-	mux.HandleFunc("POST /api/v1/novels/import", novels.importNovel)
+	api.HandleFunc("GET /api/v1/novels", novels.list)
+	api.HandleFunc("POST /api/v1/novels", novels.create)
+	api.HandleFunc("GET /api/v1/novels/{id}", novels.get)
+	api.HandleFunc("PUT /api/v1/novels/{id}", novels.update)
+	api.HandleFunc("DELETE /api/v1/novels/{id}", novels.delete)
+	api.HandleFunc("GET /api/v1/novels/{id}/full", novels.getFull)
+	api.HandleFunc("PUT /api/v1/novels/{id}/full", novels.putFull)
+	api.HandleFunc("POST /api/v1/novels/import", novels.importNovel)
 
 	concepts := &conceptsHandler{db: db}
-	mux.HandleFunc("GET /api/v1/novels/{novelId}/concepts", concepts.list)
-	mux.HandleFunc("POST /api/v1/novels/{novelId}/concepts", concepts.create)
-	mux.HandleFunc("GET /api/v1/novels/{novelId}/concepts/{id}", concepts.get)
-	mux.HandleFunc("PUT /api/v1/novels/{novelId}/concepts/{id}", concepts.update)
-	mux.HandleFunc("DELETE /api/v1/novels/{novelId}/concepts/{id}", concepts.delete)
+	api.HandleFunc("GET /api/v1/novels/{novelId}/concepts", concepts.list)
+	api.HandleFunc("POST /api/v1/novels/{novelId}/concepts", concepts.create)
+	api.HandleFunc("GET /api/v1/novels/{novelId}/concepts/{id}", concepts.get)
+	api.HandleFunc("PUT /api/v1/novels/{novelId}/concepts/{id}", concepts.update)
+	api.HandleFunc("DELETE /api/v1/novels/{novelId}/concepts/{id}", concepts.delete)
 
 	acts := &actsHandler{db: db}
-	mux.HandleFunc("GET /api/v1/novels/{novelId}/acts", acts.list)
-	mux.HandleFunc("POST /api/v1/novels/{novelId}/acts", acts.create)
-	mux.HandleFunc("GET /api/v1/novels/{novelId}/acts/{id}", acts.get)
-	mux.HandleFunc("PUT /api/v1/novels/{novelId}/acts/{id}", acts.update)
-	mux.HandleFunc("DELETE /api/v1/novels/{novelId}/acts/{id}", acts.delete)
+	api.HandleFunc("GET /api/v1/novels/{novelId}/acts", acts.list)
+	api.HandleFunc("POST /api/v1/novels/{novelId}/acts", acts.create)
+	api.HandleFunc("GET /api/v1/novels/{novelId}/acts/{id}", acts.get)
+	api.HandleFunc("PUT /api/v1/novels/{novelId}/acts/{id}", acts.update)
+	api.HandleFunc("DELETE /api/v1/novels/{novelId}/acts/{id}", acts.delete)
 
 	chapters := &chaptersHandler{db: db}
-	mux.HandleFunc("GET /api/v1/acts/{actId}/chapters", chapters.list)
-	mux.HandleFunc("POST /api/v1/acts/{actId}/chapters", chapters.create)
-	mux.HandleFunc("GET /api/v1/acts/{actId}/chapters/{id}", chapters.get)
-	mux.HandleFunc("PUT /api/v1/acts/{actId}/chapters/{id}", chapters.update)
-	mux.HandleFunc("DELETE /api/v1/acts/{actId}/chapters/{id}", chapters.delete)
+	api.HandleFunc("GET /api/v1/acts/{actId}/chapters", chapters.list)
+	api.HandleFunc("POST /api/v1/acts/{actId}/chapters", chapters.create)
+	api.HandleFunc("GET /api/v1/acts/{actId}/chapters/{id}", chapters.get)
+	api.HandleFunc("PUT /api/v1/acts/{actId}/chapters/{id}", chapters.update)
+	api.HandleFunc("DELETE /api/v1/acts/{actId}/chapters/{id}", chapters.delete)
 
 	scenes := &scenesHandler{db: db}
-	mux.HandleFunc("GET /api/v1/chapters/{chapterId}/scenes", scenes.list)
-	mux.HandleFunc("POST /api/v1/chapters/{chapterId}/scenes", scenes.create)
-	mux.HandleFunc("GET /api/v1/chapters/{chapterId}/scenes/{id}", scenes.get)
-	mux.HandleFunc("PUT /api/v1/chapters/{chapterId}/scenes/{id}", scenes.update)
-	mux.HandleFunc("DELETE /api/v1/chapters/{chapterId}/scenes/{id}", scenes.delete)
+	api.HandleFunc("GET /api/v1/chapters/{chapterId}/scenes", scenes.list)
+	api.HandleFunc("POST /api/v1/chapters/{chapterId}/scenes", scenes.create)
+	api.HandleFunc("GET /api/v1/chapters/{chapterId}/scenes/{id}", scenes.get)
+	api.HandleFunc("PUT /api/v1/chapters/{chapterId}/scenes/{id}", scenes.update)
+	api.HandleFunc("DELETE /api/v1/chapters/{chapterId}/scenes/{id}", scenes.delete)
 
 	templates := &templatesHandler{db: db}
-	mux.HandleFunc("GET /api/v1/novels/{novelId}/concept-templates", templates.list)
-	mux.HandleFunc("POST /api/v1/novels/{novelId}/concept-templates", templates.create)
-	mux.HandleFunc("PUT /api/v1/novels/{novelId}/concept-templates/{id}", templates.update)
-	mux.HandleFunc("DELETE /api/v1/novels/{novelId}/concept-templates/{id}", templates.delete)
+	api.HandleFunc("GET /api/v1/novels/{novelId}/concept-templates", templates.list)
+	api.HandleFunc("POST /api/v1/novels/{novelId}/concept-templates", templates.create)
+	api.HandleFunc("PUT /api/v1/novels/{novelId}/concept-templates/{id}", templates.update)
+	api.HandleFunc("DELETE /api/v1/novels/{novelId}/concept-templates/{id}", templates.delete)
 
-	return corsMiddleware(mux)
+	// Combine: public routes pass through, API routes require auth
+	combined := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			authMiddleware(api).ServeHTTP(w, r)
+			return
+		}
+		public.ServeHTTP(w, r)
+	})
+
+	return corsMiddleware(combined)
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
